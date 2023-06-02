@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git-server
+  labels:
+    app: git-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: git-server
+  template:
+    metadata:
+      labels:
+        app: git-server
+    spec:
+      containers:
+      - name: fcgiwrap
+        image: alexmt/nginx-cgi-wrap
+        volumeMounts:
+        - name: fcgiwrap
+          mountPath: /fcgiwrap
+        - name: data
+          mountPath: /tmp
+        command: ['sh', '-c', 'fcgiwrap -s unix:/fcgiwrap/fcgiwrap.socket & sleep 1 && chmod 777 /fcgiwrap/fcgiwrap.socket && wait']
+
+      - name: git-server
+        image: alexmt/nginx-cgi-wrap
+        command: ['sh', '-c', 'nginx -g "daemon off;"']
+        ports:
+        - containerPort: 8081
+        volumeMounts:
+        - name: data
+          mountPath: /tmp
+        - name: nginx-conf
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: fcgiwrap
+          mountPath: /var/run/fcgiwrap.socket
+          subPath: fcgiwrap.socket
+      - name: git-syncer
+        image: alpine/git
+        env:
+        - name: repo
+          value: https://github.com/argoproj/argocd-example-apps
+        - name: dest
+          value: /tmp/git/argocd-example-apps
+        command: ['sh', '-c', 'git clone $repo $dest && git -C $dest update-server-info && while true; do sleep 30; git -C $dest pull; done']
+        volumeMounts:
+        - name: data
+          mountPath: /tmp
+      volumes:
+      - name: nginx-conf
+        configMap:
+          name: nginx-conf
+          items:
+            - key: nginx.conf
+              path: nginx.conf
+      - name: data
+        emptyDir: {}
+      - name: fcgiwrap
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: git-server
+spec:
+  ports:
+  - port: 8081
+    targetPort: 8081
+  selector:
+    app: git-server
